@@ -622,6 +622,7 @@ compiler.compile = function (packageSource, options) {
 
   // Determine versions of build-time dependencies
   var buildTimeDeps = determineBuildTimeDependencies(packageSource);
+  console.log("compile start for", packageSource.name);
 
   // Build plugins
   _.each(packageSource.pluginInfo, function (info) {
@@ -666,6 +667,7 @@ compiler.compile = function (packageSource, options) {
       plugins[info.name][buildResult.image.arch] = buildResult.image;
     });
   });
+  console.log("compile almost");
 
   // Grab any npm dependencies. Keep them in a cache in the package
   // source directory so we don't have to do this from scratch on
@@ -717,28 +719,33 @@ compiler.compile = function (packageSource, options) {
                                     nodeModulesPath, isPortable);
     sources.push.apply(sources, sliceSources);
   });
+  console.log("compile almost done");
 
   // XXX what should we do if the PackageSource doesn't have a version?
   // (e.g. a plugin)
   if (! options.officialBuild && packageSource.version) {
     // XXX I have no idea if this should be using buildmessage.enterJob
     // or not. test what happens on error
+    console.log("We are in a thing");
     buildmessage.enterJob({
       title: "compute build identifier for package `" +
         packageSource.name + "`",
       rootPath: packageSource.sourceRoot
     }, function () {
+      console.log("We are in a function");
       if (packageSource.version.indexOf("+") !== -1) {
         buildmessage.error("cannot compute build identifier for package `" +
                            packageSource.name + "` version " +
                            packageSource.version + "because it already " +
                            "has a build identifier");
       } else {
+        console.log("We are about to add a buildID to version.");
         unipackage.addBuildIdentifierToVersion();
       }
     });
   }
 
+  console.log("compile done");
   return {
     sources: _.uniq(sources),
     unipackage: unipackage

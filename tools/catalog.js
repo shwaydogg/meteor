@@ -291,133 +291,146 @@ _.extend(Catalog.prototype, {
     if (_setInitialized)
       self.initialized = true;
 
-    // XXX XXX in the next version, don't go build all local packages
-    // at startup just because! instead, do the following on an
-    // ongoing, as-needed basis: when we want to load a build of
-    // package X, and it's a local package, work out its dependencies
-    // (and, lazily, the dependencies of its dependencies) and build
-    // only what is needed. (XXX does this mean that we have to create
-    // build records lazily too, or is there a way that we can create
-    // them upfront?)
-
     // Phase 2: Figure out which local packages need to be built
     // before which other local packages because of build-time
     // dependencies.
-    var packageBuildDeps = {}; // map from name to array of name
-    _.each(self.effectiveLocalPackages, function (packageDir, name) {
-      packageBuildDeps[name] = [];
-      var deps = compiler.getBuildOrderConstraints(packageSources[name]);
-      _.each(deps, function (d) {
-        if (! _.has(self.effectiveLocalPackages, d.name))
-          return; // not a local package -- may assume it's already built
-        if (d.version !== packageSources[d.name].version + "+local")
-          throw new Error("unknown version for local package?");
-        packageBuildDeps[name].push(d.name);
-      });
-    });
-    // Phase 3: Do a topological sort and build the local packages in
-    // an order that respects their build-time dependencies.
-    //
-    // XXX topological sort duplicated from bundler.js.
-    var remaining = _.clone(self.effectiveLocalPackages);
-    var onStack = {}; // map from name to true
+    self.packageSources = packageSources;
+    self.remaining = _.clone(self.effectiveLocalPackages);
+  },
 
-    var maybeGetUpToDateBuild = function (name) {
-      var sourcePath = self.effectiveLocalPackages[name];
-      var buildDir = path.join(sourcePath, '.build');
-      if (fs.existsSync(buildDir)) {
-        var unipackage = new Unipackage;
-        unipackage.initFromPath(name, buildDir, { buildOfPath: sourcePath });
-        if (compiler.checkUpToDate(packageSources[name], unipackage)) {
-          return unipackage;
-        }
+  // Returns the latest unipackage build if the package has already been
+  // compiled and built in the directory, and null otherwise.
+  maybeGetUpToDateBuild : function (name) {
+    var self = this;
+    var sourcePath = self.effectiveLocalPackages[name];
+    var buildDir = path.join(sourcePath, '.build');
+    if (fs.existsSync(buildDir)) {
+      var unipackage = new Unipackage;
+      unipackage.initFromPath(name, buildDir, { buildOfPath: sourcePath });
+      if (compiler.checkUpToDate(this.packageSources[name], unipackage)) {
+        return unipackage;
       }
-      return null;
-    };
-
-    var build = function (name) {
-      var unipackage = null;
-
-      if (! _.has(remaining, name))
-        return;
-
-      // First build things that have to build before us (if not built yet)
-      _.each(packageBuildDeps[name], function (otherName) {
-        if (_.has(onStack, otherName)) {
-          // Allow a circular dependency if the other thing is already
-          // built and doesn't need to be rebuilt.
-          unipackage = maybeGetUpToDateBuild(otherName);
-          if (unipackage) {
-            return;
-          } else {
-            buildmessage.error("circular dependency between packages " +
-                               name + " and " + otherName);
-            // recover by not enforcing one of the depedencies
-            return;
-          }
-        }
-
-        onStack[otherName] = true;
-        build(otherName);
-        delete onStack[otherName];
-      });
-
-      // Now build this package if it needs building
-      var sourcePath = self.effectiveLocalPackages[name];
-      unipackage = maybeGetUpToDateBuild(name);
-
-      if (! unipackage) {
-        // Didn't have a build or it wasn't up to date. Build it.
-        buildmessage.enterJob({
-          title: "building package `" + name + "`",
-          rootPath: sourcePath
-        }, function () {
-          unipackage = compiler.compile(packageSources[name]).unipackage;
-
-          if (! buildmessage.jobHasMessages()) {
-            // Save the build, for a fast load next time
-            try {
-              var buildDir = path.join(sourcePath, '.build');
-              files.addToGitignore(sourcePath, '.build*');
-              unipackage.saveToPath(buildDir, { buildOfPath: sourcePath });
-            } catch (e) {
-              // If we can't write to this directory, we don't get to cache our
-              // output, but otherwise life is good.
-              if (!(e && (e.code === 'EACCES' || e.code === 'EPERM')))
-                throw e;
-            }
-          }
-        });
-      }
-
-      // And put a build record for it in the catalog
-      self.builds.push({
-        packageName: name,
-        architecture: unipackage.architectures().join('+'),
-        builtBy: null,
-        build: null, // this would be the URL and hash
-        versionId: versionIds[name],
-        lastUpdated: null,
-        buildPublished: null
-      });
-
-      // XXX XXX maybe you actually want to, like, save the unipackage
-      // in memory into a cache? rather than leaving packageCache to
-      // reload it? or maybe packageCache is unified into catalog
-      // somehow? sleep on it
-
-      // Done
-      delete remaining[name];
-    };
-
-    while (true) {
-      // Go build an arbitrary local package from among those remaining.
-      var first = null;
-      for (first in remaining) break;
-      if (! first)
-        break;
-      build(first);
     }
+    return null;
+  },
+
+  // Recursively builds packages, like a boss.
+  // It sort of takes in the following:
+  //   onStack: stack of packages to be built
+  //   packageBuildDeps???
+  //   remaining???
+  build : function (name, onStack) {
+    console.log("Building: ", name);
+    var self = this;
+    var unipackage = null;
+
+    if (! _.has(self.remaining, name)) {
+      console.log("Package built");
+      return;
+    }
+
+    // Go through the build-time constraints. Make sure that they are built,
+    // either because we have built them already, or because we are about to
+    // build them.
+    var deps = compiler.getBuildOrderConstraints(self.packageSources[name]);
+    _.each(deps, function (dep) {
+
+      // Not a local package, so we may assume that it has been built.
+      if  (! _.has(self.effectiveLocalPackages, dep.name)) {
+        console.log("Package non-local");
+        return;
+      }
+
+      // Make sure that the version we need for this dependency is actually
+      // local. If it is not, then using the local build will not give us the
+      // right answer. This should never happen if the constraint solver/catalog
+      // are doing their jobs right, but we would rather fail than surprise
+      // someone with an incorrect build.
+      if (dep.version !== self.packageSources[dep.name].version + "+local")
+          throw new Error("unknown version for local package?" + name);
+
+      // OK, it is a local package. Check to see if this is a circular dependency.
+      if (_.has(onStack, dep.name)) {
+        console.log("this one is on stack");
+        // Allow a circular dependency if the other thing is already
+        // built and doesn't need to be rebuilt.
+        unipackage = self.maybeGetUpToDateBuild(dep.name);
+        if (unipackage) {
+          return;
+        } else {
+          buildmessage.error("circular dependency between packages " +
+                             name + " and " + dep.name);
+          // recover by not enforcing one of the depedencies
+          return;
+        }
+      }
+
+      // Put this on the stack! Then build it.
+      console.log("Recurse into:", dep.name, onStack);
+      onStack[dep.name] = true;
+      self.build(dep.name, onStack);
+      delete onStack[dep.name];
+    });
+
+    console.log('done w deps, built:', self.building);
+    self.building = name;
+    console.log('going to', self.building);
+
+    // Now build this package if it needs building
+    var sourcePath = self.effectiveLocalPackages[name];
+    unipackage = self.maybeGetUpToDateBuild(name);
+
+    if (! unipackage) {
+      // Didn't have a build or it wasn't up to date. Build it.
+      buildmessage.enterJob({
+        title: "building package `" + name + "`",
+        rootPath: sourcePath
+      }, function () {
+        console.log('compile');
+        delete self.remaining[name];
+        unipackage = compiler.compile(self.packageSources[name]).unipackage;
+        console.log('compiled');
+
+        if (! buildmessage.jobHasMessages()) {
+          // Save the build, for a fast load next time
+          try {
+            console.log('saving');
+            var buildDir = path.join(sourcePath, '.build');
+            files.addToGitignore(sourcePath, '.build*');
+            unipackage.saveToPath(buildDir, { buildOfPath: sourcePath });
+            console.log('saved');
+          } catch (e) {
+            // If we can't write to this directory, we don't get to cache our
+            // output, but otherwise life is good.
+            if (!(e && (e.code === 'EACCES' || e.code === 'EPERM')))
+              throw e;
+          }
+        }
+      });
+    }
+    console.log('enter into');
+
+    // And put a build record for it in the catalog
+    var versionId = self.getLatestVersion(name);
+
+    self.builds.push({
+      packageName: name,
+      architecture: unipackage.architectures().join('+'),
+      builtBy: null,
+      build: null, // this would be the URL and hash
+      versionId: versionId,
+      lastUpdated: null,
+      buildPublished: null
+    });
+
+    // XXX XXX maybe you actually want to, like, save the unipackage
+    // in memory into a cache? rather than leaving packageCache to
+    // reload it? or maybe packageCache is unified into catalog
+    // somehow? sleep on it
+
+    // Done
+    delete self.remaining[name];
+    console.log("Removed ", name, "from remaining");
   },
 
   // serverPackageData is a description of the packages available from
@@ -563,6 +576,10 @@ _.extend(Catalog.prototype, {
     self._requireInitialized();
 
     if (_.has(self.effectiveLocalPackages, name)) {
+      if (_.has(self.remaining, name) && self.building !== name) {
+        console.log("Going to build it: ", name, self.building);
+        self.build(name, {});
+      };
       return self.effectiveLocalPackages[name];
     }
 
