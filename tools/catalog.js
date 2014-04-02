@@ -295,12 +295,12 @@ _.extend(Catalog.prototype, {
     // before which other local packages because of build-time
     // dependencies.
     self.packageSources = packageSources;
-    self.remaining = _.clone(self.effectiveLocalPackages);
+    self.unbuilt = _.clone(self.effectiveLocalPackages);
   },
 
   // Returns the latest unipackage build if the package has already been
   // compiled and built in the directory, and null otherwise.
-  maybeGetUpToDateBuild : function (name) {
+  _maybeGetUpToDateBuild : function (name) {
     var self = this;
     var sourcePath = self.effectiveLocalPackages[name];
     var buildDir = path.join(sourcePath, '.build');
@@ -316,16 +316,14 @@ _.extend(Catalog.prototype, {
 
   // Recursively builds packages, like a boss.
   // It sort of takes in the following:
-  //   onStack: stack of packages to be built
-  //   packageBuildDeps???
-  //   remaining???
-  build : function (name, onStack) {
-    console.log("Building: ", name);
+  //   onStack: stack of packages to be built, to check for circular deps.
+  _build : function (name, onStack) {
     var self = this;
+    delete self.unbuilt[name];
+
     var unipackage = null;
 
-    if (! _.has(self.remaining, name)) {
-      console.log("Package built");
+    if (! _.has(self.unbuilt, name)) {
       return;
     }
 
@@ -337,7 +335,6 @@ _.extend(Catalog.prototype, {
 
       // Not a local package, so we may assume that it has been built.
       if  (! _.has(self.effectiveLocalPackages, dep.name)) {
-        console.log("Package non-local");
         return;
       }
 
@@ -354,7 +351,7 @@ _.extend(Catalog.prototype, {
         console.log("this one is on stack");
         // Allow a circular dependency if the other thing is already
         // built and doesn't need to be rebuilt.
-        unipackage = self.maybeGetUpToDateBuild(dep.name);
+        unipackage = self._maybeGetUpToDateBuild(dep.name);
         if (unipackage) {
           return;
         } else {
@@ -365,20 +362,15 @@ _.extend(Catalog.prototype, {
         }
       }
 
-      // Put this on the stack! Then build it.
-      console.log("Recurse into:", dep.name, onStack);
+      // Put this on the stack and send recursively into the builder.
       onStack[dep.name] = true;
-      self.build(dep.name, onStack);
+      self._build(dep.name, onStack);
       delete onStack[dep.name];
     });
 
-    console.log('done w deps, built:', self.building);
-    self.building = name;
-    console.log('going to', self.building);
-
     // Now build this package if it needs building
     var sourcePath = self.effectiveLocalPackages[name];
-    unipackage = self.maybeGetUpToDateBuild(name);
+    unipackage = self._maybeGetUpToDateBuild(name);
 
     if (! unipackage) {
       // Didn't have a build or it wasn't up to date. Build it.
@@ -386,15 +378,10 @@ _.extend(Catalog.prototype, {
         title: "building package `" + name + "`",
         rootPath: sourcePath
       }, function () {
-        console.log('compile');
-        delete self.remaining[name];
         unipackage = compiler.compile(self.packageSources[name]).unipackage;
-        console.log('compiled');
-
         if (! buildmessage.jobHasMessages()) {
           // Save the build, for a fast load next time
           try {
-            console.log('saving');
             var buildDir = path.join(sourcePath, '.build');
             files.addToGitignore(sourcePath, '.build*');
             unipackage.saveToPath(buildDir, { buildOfPath: sourcePath });
@@ -408,8 +395,6 @@ _.extend(Catalog.prototype, {
         }
       });
     }
-    console.log('enter into');
-
     // And put a build record for it in the catalog
     var versionId = self.getLatestVersion(name);
 
@@ -427,10 +412,6 @@ _.extend(Catalog.prototype, {
     // in memory into a cache? rather than leaving packageCache to
     // reload it? or maybe packageCache is unified into catalog
     // somehow? sleep on it
-
-    // Done
-    delete self.remaining[name];
-    console.log("Removed ", name, "from remaining");
   },
 
   // serverPackageData is a description of the packages available from
@@ -575,11 +556,15 @@ _.extend(Catalog.prototype, {
     var self = this;
     self._requireInitialized();
 
+    // Check local packages first.
     if (_.has(self.effectiveLocalPackages, name)) {
-      if (_.has(self.remaining, name) && self.building !== name) {
-        console.log("Going to build it: ", name, self.building);
-        self.build(name, {});
+
+      // If we don't have a build of this package, we need to rebuild it.
+      if (_.has(self.unbuilt, name)) {
+        self._build(name, {});
       };
+
+      // Return the path.
       return self.effectiveLocalPackages[name];
     }
 
