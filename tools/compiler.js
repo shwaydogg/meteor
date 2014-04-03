@@ -5,12 +5,12 @@ var buildmessage = require('./buildmessage.js');
 var archinfo = require(path.join(__dirname, 'archinfo.js'));
 var linker = require('./linker.js');
 var Unipackage = require('./unipackage.js');
-var PackageLoader = require('./package-loader.js');
 var uniload = require('./uniload.js');
 var bundler = require('./bundler.js');
 var catalog = require('./catalog.js');
 var utils = require('./utils.js');
 var meteorNpm = require('./meteor-npm.js');
+var PackageLoader = require('./package-loader.js');
 
 var compiler = exports;
 
@@ -806,10 +806,10 @@ compiler.checkUpToDate = function (packageSource, unipackage) {
     // a-fresh, then we should change this back to "return false".
     //
     // XXX XXX XXX XXX XXX XXX XXX
-    console.log("XXX warning: considering package",
+/*    console.log("XXX warning: considering package",
                 packageSource.name, "to be up to date because",
                 "it was built by <", compiler.BUILT_BY,
-                "and this makes no sense at all");
+                "and this makes no sense at all"); */
     return true;
     return false;
   }

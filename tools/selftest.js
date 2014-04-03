@@ -621,8 +621,7 @@ var Run = function (execPath, options) {
   self.env = options.env || {};
   self._args = [];
   self.proc = null;
-  console.log("XXX: we have increased base timeout to deal with catalog speed");
-  self.baseTimeout = 5;
+  self.baseTimeout = 2;
   self.extraTime = 0;
 
   self.stdoutMatcher = new Matcher(self);

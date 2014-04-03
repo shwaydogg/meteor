@@ -7,6 +7,7 @@ var files = require('../../files.js');
 var bundler = require('../../bundler.js');
 var uniload = require('../../uniload.js');
 var release = require('../../release.js');
+var catalog = require('../../catalog.js');
 
 var appWithPublic = path.join(__dirname, 'app-with-public');
 var appWithPrivate = path.join(__dirname, 'app-with-private');
@@ -24,15 +25,29 @@ var runTest = function () {
   assert.doesNotThrow(function () {
     var tmpOutputDir = tmpDir();
 
+    console.log("THis code calls to release at some point.");
+    console.log("Why does this test exist?");
+
     // XXX This (and other calls to this function in the file) is
     // pretty terrible. see release.js, #HandlePackageDirsDifferently
-    release._resetPackageDirs();
+   // release._resetPackageDirs();
+
+    var localPackageDirs = [];
+    if (process.env.PACKAGE_DIRS)
+      localPackageDirs = localPackageDirs.concat(
+        process.env.PACKAGE_DIRS.split(':'));
+    localPackageDirs.push(path.join(files.getCurrentToolsDir(), 'packages'));
+
+    catalog.catalog.initialize({
+      localPackageDirs: localPackageDirs
+    });
 
     var result = bundler.bundle({
       appDir: appWithPublic,
       outputPath: tmpOutputDir,
       nodeModulesMode: 'skip'
-    })
+    });
+
     var clientManifest = JSON.parse(
       fs.readFileSync(
         path.join(tmpOutputDir, "programs", "client", "program.json")

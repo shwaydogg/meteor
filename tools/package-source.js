@@ -523,8 +523,9 @@ _.extend(PackageSource.prototype, {
         // far. (Otherwise if there is a parse error we'll always get
         // this message, because we won't have been able to run any
         // code.)
-        buildmessage.error("A version must be specified for the package. " +
-                           "Set it with Package.describe.");
+        buildmessage.error("A version must be specified for the package "
+                           + self.name +
+                           ". Set it with Package.describe.");
       }
       // Recover by leaving the version unset. This is sort of
       // unfortunate (it means that whereever we work with Package
